@@ -2,18 +2,12 @@ const http = require('http');
 const express = require('express');
 const app = express();
 const bodyParser = require('body-parser');
-const sequelize = require('./api/util/database');
+// const knex = require('../../db/knex');
+const knex = require('./db/knex');
 
 const userRoutes = require('./api/routes/user');
 const adminRoutes = require('./api/routes/admin');
 const shopRoutes = require('./api/routes/shop');
-
-const Product = require('./api/models/product');
-const User = require('./api/models/user');
-const Cart = require('./api/models/cart');
-const CartItem = require('./api/models/cart-item');
-const Order = require('./api/models/order');
-const OrderItem = require('./api/models/order-item');
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
@@ -26,6 +20,12 @@ app.use((req, res, next) => {
         return res.status(200).json({});
     }
     next();
+});
+
+app.get('/setup', async (req, res, next) => {
+    await knex.migrate.latest();
+    await knex.seed.run();
+    res.send("migrated databse and seeded");
 });
 
 //Routes
@@ -48,24 +48,11 @@ app.use((error, req, res, next) => {
     });
 });
 
-User.hasOne(Cart);
-Cart.belongsTo(User);
-Cart.belongsToMany(Product, { through: CartItem });
-Product.belongsToMany(Cart, { through: CartItem });
-Order.belongsTo(User);
-User.hasMany(Order);
-Order.belongsToMany(Product, {through: OrderItem});
-
 const port = process.env.PORT || 3001;
 const server = http.createServer(app);
 
-sequelize
-    //.sync({force: true})
-    .sync()
-    .then(result => {
-        server.listen(port, () => { console.log('Server running on port :' + port) });
-    })
-    .catch(err => {
-        console.log(err);
+server.listen(port, () => { 
+    console.log('Server running on port :' + port);
     });
 
+module.exports = app;

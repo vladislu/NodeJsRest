@@ -15,5 +15,4 @@ router.get('/top-5-customers/:month', checkAuth  , adminController.topCustomers)
 router.get('/top-5-customers-by-total/:month', checkAuth  , adminController.topCustomersTotal);
 router.get('/avg-sales/:month', checkAuth  , adminController.avgSales);
 
-
 module.exports = router;

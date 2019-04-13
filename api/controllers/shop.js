@@ -1,157 +1,126 @@
 const Product = require('../models/product');
+const Cart = require('../models/cart');
+const Order = require('../models/order');
+
 const User = require('../models/user');
 
-exports.getProducts = (req, res, next) => {
-    Product.findAll()
-        .then(products => {
-            res.status(200).json(products);
-        })
-        .catch(err => res.status(500).json({ error: err }));
-};
+exports.getProducts = async (req, res, next) => {
+    const products = await Product.GetProducts();
+    res.status(200).json(products);
+}
 
-exports.getProduct = (req, res, next) => {
+exports.getProduct = async (req, res, next) => {
     const prodId = req.params.productId;
-    // Product.findAll({where: { id: prodId }})
-    Product.findByPk(prodId)
-        .then(product => {
-            if (product) res.status(200).json(product);
-            else res.status(404).json({ message: 'Product not found' });
-        })
-        .catch(err => res.status(500).json({ error: err }));
+    try {
+        const product = await Product.GetProductById(prodId);
+        res.status(200).json(product);
+    } catch (error) {
+        res.status(404).json({ message: 'Product not found' });
+    }
 };
 
-exports.getCart = (req, res, next) => {
-    User.findByPk(req.userData.userId)
-        .then(user => {
-            return user.getCart();
-        })
-        .then(cart => {
-            return cart.getProducts();
-        })
-        .then(products => {
-            res.status(200).json(products);
-        })
-        .catch(err => { res.status(500).json({ error: err }) });
+exports.getCart = async (req, res, next) => {
+    try {
+        const cart = await Cart.GetCartByUserId(req.userData.userId);
+        const products = await cart.GetItems();
+        res.status(200).json(products);
+    } catch (error) {
+        res.status(500).json({ message: 'Cart empty.' });
+    }
+
 };
 
-exports.addToCart = (req, res, next) => {
+exports.addToCart = async (req, res, next) => {
     const prodId = req.body.productId;
-    let newQuantity = 1;
-    let fetchedCart;
-    let fetchedUser;
-
-    User.findByPk(req.userData.userId)
-        .then(user => {
-            fetchedUser = user;
-            return user.getCart();
-        })
-        .then(cart => {
-            if (cart) return Promise.resolve(cart);
-            return fetchedUser.createCart();
-        })
-        .then(cart => {
-            fetchedCart = cart;
-            return cart.getProducts({ where: { id: prodId } });
-        })
-        .then(products => {
-            let product;
-            if (products.length > 0) {
-                product = products[0];
-            }
-
-            if (product) {
-                const oldQuantity = product.cartItem.quantity;
-                newQuantity = oldQuantity + 1;
-                return product;
-            }
-            return Product.findByPk(prodId);
-        })
-        .then(product => {
-            return fetchedCart.addProduct(product, {
-                through: { quantity: newQuantity }
-            });
-        })
-        .then(result => {
-            res.status(200).json({ message: 'Product added to cart.' });
-        })
-        .catch(err => { res.status(500).json({ error: 'Can not add item to cart. ' }) });
+    let cart = await Cart.GetCartByUserId(req.userData.userId);
+    if (!cart) {
+        const createCart = new Cart(null, req.userData.userId);
+        await createCart.Create();
+        cart = await Cart.GetCartByUserId(req.userData.userId);
+    }
+    let cartItem = await cart.GetItem(prodId);
+    if (cartItem.length > 0) {
+        cart.AddItem(prodId, cartItem[0].quantity + 1)
+    } else {
+        cart.AddNewItem(prodId);
+    }
+    res.status(200).json({ message: 'Product added to cart.' });
 };
 
-exports.deleteCartProduct = (req, res, next) => {
+exports.deleteCartProduct = async (req, res, next) => {
     const prodId = req.body.productId;
-    User.findByPk(req.userData.userId)
-        .then(user => {
-            return user.getCart();
-        })
-        .then(cart => {
-            return cart.getProducts({ where: { id: prodId } });
-        })
-        .then(products => {
-            const product = products[0];
-            return product.cartItem.destroy();
-        })
-        .then(result => {
-            res.status(200).json({ message: 'Product removed from cart.' });
-        })
-        .catch(err => { res.status(500).json({ error: err }) });
+    const cart = await Cart.GetCartByUserId(req.userData.userId);
+    const deleted = await cart.DeleteItem(prodId);
+    res.status(200).json({ message: 'Product removed from cart.' });
 };
 
-exports.createOrder = (req, res, next) => {
-    let fetchedCart;
-    let fetchedUser;
-    let fetchedProducts;
-    User.findByPk(req.userData.userId)
-        .then(user => {
-            fetchedUser = user;
-            return user.getCart();
-        })
-        .then(cart => {
-            fetchedCart = cart;
-            return cart.getProducts();
-        })
-        .then(products => {
-            let total = 0;
-            fetchedProducts = products.map(product => {
-                product.orderItem = { quantity: product.cartItem.quantity };
-                total = total + (product.price * product.cartItem.quantity);
-                total = +total.toFixed(2);
-                return product;
-            });
-            return fetchedUser.createOrder({
-                total: total
-            });
-        })
-        .then(order => {
-            return order.addProducts(fetchedProducts);
-        })
-        .then(result => {
-            return fetchedCart.setProducts(null);
-        })
-        .then(result => {
-            res.status(200).json({ message: 'order created.' });
-        })
-        .catch(err => { res.status(500).json({ error: err }) });
+exports.createOrder = async (req, res, next) => {
+    const stripe = require("stripe")("sk_test_1rKLLEFA8QjnSw6LWiwQcBph00WIixxg3k");
+    stripe.setApiVersion('2019-03-14');
+
+    const number = req.body.number;
+    const exp_month = req.body.exp_month;
+    const exp_year = req.body.exp_year;
+    const cvc = req.body.cvc;
+    let tok;
+
+    await stripe.tokens.create({
+        card: {
+            number: number,
+            exp_month: exp_month,
+            exp_year: exp_year,
+            cvc: cvc
+        }
+    }, (err, token) => {
+        if (err) {
+            return res.status(err.statusCode).json({ message: err.message });
+        } else {
+            tok = token.id;
+        }
+    });
+
+    const cart = await Cart.GetCartByUserId(req.userData.userId);
+    let cartitems;
+    try {
+        cartitems = await cart.GetItems();
+    } catch (error) {
+        return res.status(500).json({ message: 'Cart empty.' });
+    }
+
+    let total = 0;
+    await cartitems.map(item => {
+        total = total + (item.price * item.quantity);
+        total = +total.toFixed(2);
+    });
+    total = total * 100;
+
+    await stripe.charges.create({
+        amount: total,
+        currency: 'usd',
+        description: 'charge for test',
+        source: tok,
+        receipt_email: req.userData.email
+    }, async (err, charge) => {
+        if (err) {
+            return res.status(err.statusCode).json({ message: err.message });
+        } else {
+            const order = new Order(null, null, req.userData.userId)
+            const create = await order.Create(cartitems);
+            const clean = await cart.Delete();
+            res.status(200).json({ message: 'Order created.', receipt_url: charge.receipt_url });
+        }
+    });
 };
 
-exports.getOrders = (req, res, next) => {
-    User.findByPk(req.userData.userId)
-        .then(user => {
-            return user.getOrders({ include: [{ model: Product }] })
-        })
-        .then(orders => {
-            res.status(200).json(orders);
-        })
-        .catch(err => { res.status(500).json({ error: err }) });
+exports.getOrders = async (req, res, next) => {
+    const orders = await Order.GetOrdersByUserId(req.userData.userId)
+    console.log(orders);
+    res.status(200).json(orders);
 };
 
-exports.getOrder = (req, res, next) => {
+exports.getOrder = async (req, res, next) => {
     const orderId = req.params.orderId;
-    User.findByPk(req.userData.userId)
-        .then(user => {
-            return user.getOrders({ include: [{ model: Product }], where: { id: orderId } });
-        })
-        .then(orders => {
-            res.status(200).json(orders);
-        })
-        .catch(err => { res.status(500).json({ error: err.message }) });
+    const userId = req.userData.userId
+    const order = await Order.GetOrderByIdAndUserId(userId, orderId);
+    res.status(200).json(order);
 };
